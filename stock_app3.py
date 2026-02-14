@@ -235,20 +235,49 @@ class Portfolio:
 def get_db_connection():
     """Create a connection to PostgreSQL database"""
     try:
+        # Check if we're on Render (production) or local
+        import os
+        import urllib.parse
+        
+        # For Render - use environment variable
+        database_url = os.getenv("DATABASE_URL")
+        
+        if database_url:
+            # Render provides DATABASE_URL automatically
+            # Fix for postgres:// vs postgresql://
+            if database_url.startswith("postgres://"):
+                database_url = database_url.replace("postgres://", "postgresql://", 1)
+            
+            # Parse the URL
+            result = urllib.parse.urlparse(database_url)
+            
+            conn = psycopg2.connect(
+                host=result.hostname,
+                port=result.port or 5432,
+                database=result.path[1:],  # Remove leading '/'
+                user=result.username,
+                password=result.password,
+                connect_timeout=10
+            )
+            conn.autocommit = True
+            return conn
+        
+        # For local development - use localhost
         conn = psycopg2.connect(
             host="localhost",
             port="5432",
             database="learntotrade_db",
             user="postgres",
-            password="123"
+            password="123",
+            connect_timeout=5
         )
-        # Set autocommit to True to avoid transaction issues
         conn.autocommit = True
         return conn
+        
     except Exception as e:
         st.error(f"Database connection error: {e}")
+        # Don't return None, let the app handle it gracefully
         return None
-
 # Initialize database tables if they don't exist
 def initialize_database():
     """Initialize database tables if they don't exist"""
@@ -397,7 +426,13 @@ def get_user_portfolio(user_id):
     """Get or create user portfolio from database"""
     conn = get_db_connection()
     if conn is None:
-        return None
+        # Return a default portfolio when database is not available
+        return {
+            'cash': 100000.00,
+            'holdings': {},
+            'orders': [],
+            'portfolio_id': 0
+        }
     
     try:
         cur = conn.cursor()
@@ -483,7 +518,13 @@ def get_user_portfolio(user_id):
             
     except Exception as e:
         st.error(f"Error getting portfolio: {e}")
-        return None
+        # Return default portfolio on error
+        return {
+            'cash': 100000.00,
+            'holdings': {},
+            'orders': [],
+            'portfolio_id': 0
+        }
 
 def calculate_portfolio_value(user_id):
     """Calculate total portfolio value including holdings"""
