@@ -283,23 +283,78 @@ def initialize_database():
     """Initialize database tables if they don't exist"""
     conn = get_db_connection()
     if conn is None:
+        st.warning("Running in demo mode - database not connected")
         return False
     
     try:
         cur = conn.cursor()
         
-        # Check if learning_progress table exists
+        # Check if users table exists
         cur.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
-                WHERE table_name = 'learning_progress'
+                WHERE table_name = 'users'
             );
         """)
         table_exists = cur.fetchone()[0]
         
         if not table_exists:
-            # Create learning_progress table
+            st.info("Creating database tables...")
+            # Create all tables
             cur.execute("""
+                CREATE TABLE users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(50) UNIQUE NOT NULL,
+                    email VARCHAR(100) UNIQUE NOT NULL,
+                    password_hash VARCHAR(256) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP
+                );
+                
+                CREATE TABLE portfolios (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    cash DECIMAL(15,2) DEFAULT 100000.00,
+                    total_value DECIMAL(15,2) DEFAULT 100000.00,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE TABLE holdings (
+                    id SERIAL PRIMARY KEY,
+                    portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE,
+                    symbol VARCHAR(20) NOT NULL,
+                    company_name VARCHAR(200),
+                    shares INTEGER NOT NULL,
+                    avg_price DECIMAL(15,2) NOT NULL,
+                    total_invested DECIMAL(15,2) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE TABLE orders (
+                    id SERIAL PRIMARY KEY,
+                    portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE,
+                    symbol VARCHAR(20) NOT NULL,
+                    company_name VARCHAR(200),
+                    action VARCHAR(10) NOT NULL,
+                    shares INTEGER NOT NULL,
+                    price DECIMAL(15,2) NOT NULL,
+                    total DECIMAL(15,2) NOT NULL,
+                    profit_loss DECIMAL(15,2),
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE TABLE watchlists (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    symbol VARCHAR(20) NOT NULL,
+                    company_name VARCHAR(200),
+                    notes TEXT,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, symbol)
+                );
+                
                 CREATE TABLE learning_progress (
                     id SERIAL PRIMARY KEY,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -311,7 +366,10 @@ def initialize_database():
                     UNIQUE(user_id, course_category, lesson_name)
                 );
             """)
-            st.info("Created learning_progress table")
+            conn.commit()
+            st.success("✅ Database tables created successfully!")
+        else:
+            st.info("✅ Database tables already exist")
         
         cur.close()
         return True
