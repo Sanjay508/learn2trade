@@ -14,6 +14,125 @@ from plotly.subplots import make_subplots
 import psycopg2
 from psycopg2 import sql
 import hashlib
+import os
+import urllib.parse
+
+# ==================== FIX 1: DATABASE CONNECTION FOR RENDER ====================
+
+def get_db_connection():
+    """Create a connection to PostgreSQL database - Works on both local and Render"""
+    try:
+        # Check if we're on Render (production) or local
+        database_url = os.getenv("DATABASE_URL")
+        
+        if database_url:
+            # Render provides DATABASE_URL automatically
+            # Fix for postgres:// vs postgresql://
+            if database_url.startswith("postgres://"):
+                database_url = database_url.replace("postgres://", "postgresql://", 1)
+            
+            # Parse the URL
+            result = urllib.parse.urlparse(database_url)
+            
+            conn = psycopg2.connect(
+                host=result.hostname,
+                port=result.port or 5432,
+                database=result.path[1:],  # Remove leading '/'
+                user=result.username,
+                password=result.password,
+                connect_timeout=10,
+                sslmode='require'  # Required for Render
+            )
+            conn.autocommit = True
+            return conn
+        
+        # For local development - use localhost
+        conn = psycopg2.connect(
+            host="localhost",
+            port="5432",
+            database="learntotrade_db",
+            user="postgres",
+            password="123",
+            connect_timeout=5
+        )
+        conn.autocommit = True
+        return conn
+        
+    except Exception as e:
+        st.error(f"Database connection error: {e}")
+        # Return None but let the app handle it gracefully
+        return None
+
+# ==================== FIX 2: INDIAN STOCKS LOADING ====================
+
+def load_indian_stocks():
+    """Load Indian stocks from CSV or create fallback data"""
+    try:
+        # Try to load from CSV
+        if os.path.exists('stocks.csv'):
+            df = pd.read_csv('stocks.csv')
+            # Ensure required columns exist
+            if 'NAME OF COMPANY' in df.columns and 'SYMBOL' in df.columns:
+                return df
+            else:
+                # Create fallback data if columns don't match
+                return create_fallback_stocks()
+        else:
+            # Create fallback data if file doesn't exist
+            return create_fallback_stocks()
+    except Exception as e:
+        st.warning(f"Could not load stocks.csv: {e}. Using fallback data.")
+        return create_fallback_stocks()
+
+def create_fallback_stocks():
+    """Create fallback Indian stocks data"""
+    data = {
+        'NAME OF COMPANY': [
+            'Reliance Industries',
+            'Tata Consultancy Services',
+            'HDFC Bank',
+            'Infosys',
+            'ICICI Bank',
+            'Hindustan Unilever',
+            'State Bank of India',
+            'Bharti Airtel',
+            'ITC',
+            'Larsen & Toubro',
+            'Kotak Mahindra Bank',
+            'Axis Bank',
+            'Asian Paints',
+            'Maruti Suzuki',
+            'Sun Pharma',
+            'Tata Motors',
+            'Titan',
+            'Bajaj Finance',
+            'Wipro',
+            'Adani Enterprises'
+        ],
+        'SYMBOL': [
+            'RELIANCE.NS',
+            'TCS.NS',
+            'HDFCBANK.NS',
+            'INFY.NS',
+            'ICICIBANK.NS',
+            'HINDUNILVR.NS',
+            'SBIN.NS',
+            'BHARTIARTL.NS',
+            'ITC.NS',
+            'LT.NS',
+            'KOTAKBANK.NS',
+            'AXISBANK.NS',
+            'ASIANPAINT.NS',
+            'MARUTI.NS',
+            'SUNPHARMA.NS',
+            'TATAMOTORS.NS',
+            'TITAN.NS',
+            'BAJFINANCE.NS',
+            'WIPRO.NS',
+            'ADANIENT.NS'
+        ]
+    }
+    return pd.DataFrame(data)
 
 # ==================== OOP CLASSES ====================
 
@@ -32,19 +151,7 @@ class DatabaseManager:
     def get_connection(self):
         """Create a connection to PostgreSQL database"""
         if self.connection is None or self.connection.closed:
-            try:
-                self.connection = psycopg2.connect(
-                    host="localhost",
-                    port="5432",
-                    database="learntotrade_db",
-                    user="postgres",
-                    password="123"
-                )
-                # Set autocommit to True to avoid transaction issues
-                self.connection.autocommit = True
-            except Exception as e:
-                st.error(f"Database connection error: {e}")
-                return None
+            self.connection = get_db_connection()
         return self.connection
     
     def close_connection(self):
@@ -108,6 +215,14 @@ class User:
         except Exception as e:
             st.error(f"Error getting learning progress: {e}")
             return {}
+    
+    def get_completed_lesson_count(self):
+        """Get total completed lessons"""
+        progress = self.get_learning_progress()
+        completed = 0
+        for category in progress:
+            completed += progress[category].get('completed', 0)
+        return completed
     
     def mark_lesson_complete(self, course_category, lesson_name):
         """Mark a lesson as complete for user - prevents duplicate completions"""
@@ -231,53 +346,6 @@ class Portfolio:
 
 # ==================== DATABASE FUNCTIONS ====================
 
-# Database connection
-def get_db_connection():
-    """Create a connection to PostgreSQL database"""
-    try:
-        # Check if we're on Render (production) or local
-        import os
-        import urllib.parse
-        
-        # For Render - use environment variable
-        database_url = os.getenv("DATABASE_URL")
-        
-        if database_url:
-            # Render provides DATABASE_URL automatically
-            # Fix for postgres:// vs postgresql://
-            if database_url.startswith("postgres://"):
-                database_url = database_url.replace("postgres://", "postgresql://", 1)
-            
-            # Parse the URL
-            result = urllib.parse.urlparse(database_url)
-            
-            conn = psycopg2.connect(
-                host=result.hostname,
-                port=result.port or 5432,
-                database=result.path[1:],  # Remove leading '/'
-                user=result.username,
-                password=result.password,
-                connect_timeout=10
-            )
-            conn.autocommit = True
-            return conn
-        
-        # For local development - use localhost
-        conn = psycopg2.connect(
-            host="localhost",
-            port="5432",
-            database="learntotrade_db",
-            user="postgres",
-            password="123",
-            connect_timeout=5
-        )
-        conn.autocommit = True
-        return conn
-        
-    except Exception as e:
-        st.error(f"Database connection error: {e}")
-        # Don't return None, let the app handle it gracefully
-        return None
 # Initialize database tables if they don't exist
 def initialize_database():
     """Initialize database tables if they don't exist"""
@@ -479,7 +547,7 @@ def login_user(username, password):
     except Exception as e:
         return False, f"Login failed: {str(e)}", None
 
-# Portfolio functions - MUST BE DEFINED BEFORE THEY ARE CALLED
+# Portfolio functions
 def get_user_portfolio(user_id):
     """Get or create user portfolio from database"""
     conn = get_db_connection()
@@ -742,7 +810,6 @@ def update_portfolio_db(user_id, symbol, action, shares, price, company_name="")
             cur.close()
             conn.close()
             
-            # FIXED: Removed extra parenthesis
             return True, f"Sell order executed (P&L: ₹{profit_loss:.2f})"
     
     except Exception as e:
@@ -842,8 +909,6 @@ def get_watchlist(user_id):
         st.error(f"Error getting watchlist: {e}")
         return []
 
-
-
 # Market hours check functions
 def is_market_open_now():
     """Check if market is currently open based on Indian market hours"""
@@ -879,7 +944,8 @@ def get_live_data_period():
     
     return start_time, end_time
 
-# Stock Market Learning Content
+# ==================== STOCK MARKET LEARNING CONTENT ====================
+
 STOCK_MARKET_COURSES = {
     "Basics": {
         "What is Stock Market?": {
@@ -4565,6 +4631,7 @@ STOCK_MARKET_COURSES = {
     }
 }
 
+# International Stocks Database
 STOCKS_DATABASE = {
     "International Stocks": {
         "Apple Inc.": "AAPL",
@@ -4657,47 +4724,11 @@ STOCKS_DATABASE = {
         "Taiwan Semiconductor Mfg. Co. Ltd.": "TSM",
         "Mitsubishi UFJ Financial Group Inc (Japan)": "MUFG",
         "Commonwealth Bank of Australia": "CBA.AX",
-    },
-    "Indian Stocks": {
-        "Reliance Industries Ltd.": "RELIANCE.NS",
-        "Tata Consultancy Services Ltd.": "TCS.NS",
-        "HDFC Bank Ltd.": "HDFCBANK.NS",
-        "Infosys Ltd.": "INFY.NS",
-        "ICICI Bank Ltd.": "ICICIBANK.NS",
-        "Hindustan Unilever Ltd.": "HINDUNILVR.NS",
-        "State Bank of India": "SBIN.NS",
-        "Bharti Airtel Ltd.": "BHARTIARTL.NS",
-        "ITC Ltd.": "ITC.NS",
-        "Larsen & Toubro Ltd.": "LT.NS",
-        "Kotak Mahindra Bank Ltd.": "KOTAKBANK.NS",
-        "Axis Bank Ltd.": "AXISBANK.NS",
-        "Asian Paints Ltd.": "ASIANPAINT.NS",
-        "Maruti Suzuki India Ltd.": "MARUTI.NS",
-        "Sun Pharmaceutical Industries Ltd.": "SUNPHARMA.NS",
-        "Mahindra & Mahindra Ltd.": "M&M.NS",
-        "Titan Company Ltd.": "TITAN.NS",
-        "Bajaj Finance Ltd.": "BAJFINANCE.NS",
-        "Wipro Ltd.": "WIPRO.NS",
-        "UltraTech Cement Ltd.": "ULTRACEMCO.NS"
-    },
-    "ETFs (Exchange Traded Funds)": {
-        "SPDR S&P 500 ETF Trust [SPY]": "SPY",
-        "Invesco QQQ Trust [QQQ]": "QQQ",
-        "Vanguard Total Stock Market ETF [VTI]": "VTI",
-        "iShares Core S&P 500 ETF [IVV]": "IVV",
-        "Vanguard FTSE Emerging Markets ETF [VWO]": "VWO",
-        "iShares MSCI India ETF [INDA]": "INDA"
     }
 }
 
-# Load Indian stocks
-try:
-    all_indian_stocks = pd.read_csv('stocks.csv')
-except:
-    all_indian_stocks = pd.DataFrame({
-        'NAME OF COMPANY': ['Dummy Company'],
-        'SYMBOL': ['DUMMY.NS']
-    })
+# Load Indian stocks using our new function
+all_indian_stocks = load_indian_stocks()
 
 # Initialize database tables
 initialize_database()
@@ -4731,13 +4762,12 @@ if 'selected_lesson' not in st.session_state:
     st.session_state.selected_lesson = None
 if 'current_user' not in st.session_state:
     st.session_state.current_user = None
-# state initialization
 if 'lesson_completed' not in st.session_state:
     st.session_state.lesson_completed = {}
 
 # Initialize random trading simulator states
 if 'random_stock_index' not in st.session_state:
-    st.session_state.random_stock_index = random.randint(0, len(all_indian_stocks) - 1) if 'all_indian_stocks' in locals() else 0
+    st.session_state.random_stock_index = random.randint(0, len(all_indian_stocks) - 1) if len(all_indian_stocks) > 0 else 0
 if 'current_minute' not in st.session_state:
     st.session_state.current_minute = 0
 if 'trading_data' not in st.session_state:
@@ -4828,14 +4858,12 @@ if not st.session_state.authenticated:
                             st.error(message)
                 else:
                     st.error("Please fill in all fields")
-        
-      
     
 else:
     # Main Application
     st.title(f"📈 Learn2Trade - Welcome {st.session_state.username}!")
     
-        # Sidebar with logout option
+    # Sidebar with logout option
     with st.sidebar:
         st.header(f"👤 {st.session_state.username}")
         
@@ -4869,7 +4897,7 @@ else:
         
         st.markdown("---")
         
-        # Navigation - UPDATED (removed Learn Concepts from here)
+        # Navigation
         nav_options = ["📈 Trading", "📊 Portfolio", "⭐ Watchlist"]
         selected_nav = st.radio("Go to:", nav_options, label_visibility="collapsed")
         
@@ -4888,7 +4916,7 @@ else:
         
         st.markdown("---")
         
-        # Trading Mode Selection - UPDATED with Learn Concepts
+        # Trading Mode Selection
         method_trading = st.selectbox("Select Trading Mode:", 
                                      ["Live Trading", "Practice Mode", "Learn Concepts"])
         
@@ -4920,6 +4948,7 @@ else:
                     
                     if len(portfolio['holdings']) > 3:
                         st.caption(f"+ {len(portfolio['holdings']) - 3} more holdings")
+
     # Main Content Area
     if method_trading == "Learn Concepts" or st.session_state.show_learning:
         # Learning Mode - Comprehensive Stock Market Education
@@ -6088,7 +6117,7 @@ else:
             st.info("Please select or search for a stock to view its data.")
     
     else:
-        # Practice Mode (formerly "Learn with random graph") - REMOVED navigation options
+        # Practice Mode
         st.header("💰 Practice Mode")
         
         # Auto-advance timer
@@ -6109,7 +6138,10 @@ else:
         
         # Get stock details
         idx = st.session_state.random_stock_index
-        symbol = all_indian_stocks.iloc[idx, 0]
+        if len(all_indian_stocks) > 0 and 'NAME OF COMPANY' in all_indian_stocks.columns:
+            symbol = all_indian_stocks.iloc[idx, 0] if 'NAME OF COMPANY' in all_indian_stocks.columns else "RELIANCE.NS"
+        else:
+            symbol = "RELIANCE.NS"
         
         st.subheader(f"📈 Trading: {symbol}")
         
@@ -7028,4 +7060,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("©Learn2Trade - Educational Trading Platform")
+st.markdown("© Learn2Trade - Educational Trading Platform")
